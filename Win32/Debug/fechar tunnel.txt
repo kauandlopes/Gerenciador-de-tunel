@@ -1,0 +1,1 @@
+taskkill /f /im GerenciadorTunel.exe /t & taskkill /f /im cloudflared.exe /t

@@ -1,0 +1,60 @@
+unit UConfiguracao;
+
+interface
+
+uses System.SysUtils, System.IniFiles, Winapi.Windows, Winapi.Winsock;
+
+type
+  TConfiguracao = class
+  private
+    FUrlDestino: string;
+    FPortaLocal: Integer;
+    FIdPonto: string;
+    function GetIPLocal: string;
+    function GetNomeUsuario: string;
+  public
+    procedure Carregar;
+    property UrlDestino: string read FUrlDestino;
+    property PortaLocal: Integer read FPortaLocal;
+    property IdPonto: string read FIdPonto;
+  end;
+
+implementation
+
+function TConfiguracao.GetNomeUsuario: string;
+var Buffer: array[0..255] of Char; Size: Cardinal;
+begin
+  Size := 256;
+  if GetUserName(Buffer, Size) then Result := string(Buffer) else Result := 'User';
+end;
+
+function TConfiguracao.GetIPLocal: string;
+var WSAData: TWSAData; HostEnt: PHostEnt; Name: array[0..255] of AnsiChar;
+begin
+  Result := '0.0.0.0';
+  if WSAStartup($0101, WSAData) = 0 then
+  begin
+    if GetHostName(Name, SizeOf(Name)) = 0 then
+    begin
+      HostEnt := GetHostByName(Name);
+      if HostEnt <> nil then Result := string(inet_ntoa(PInAddr(HostEnt^.h_addr_list^)^));
+    end;
+    WSACleanup;
+  end;
+end;
+
+procedure TConfiguracao.Carregar;
+var Ini: TIniFile; Path: string;
+begin
+  Path := ExtractFilePath(ParamStr(0)) + 'config.ini';
+  Ini := TIniFile.Create(Path);
+  try
+    FUrlDestino := Ini.ReadString('Config', 'URL_API', '');
+    FPortaLocal := Ini.ReadInteger('Config', 'PORTA_SISTEMA', 3000);
+    FIdPonto := GetNomeUsuario + ' - ' + GetIPLocal;
+  finally
+    Ini.Free;
+  end;
+end;
+
+end.

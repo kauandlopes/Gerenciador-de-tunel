@@ -1,0 +1,12 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<BorlandProject>
+  <Transactions>
+    <Transaction>2026/03/20 10:26:15.826,=C:\Users\Dias\Documents\Embarcadero\Studio\Projects\Unit1.pas</Transaction>
+    <Transaction>2026/03/20 10:27:05.462,C:\Users\Dias\Documents\Embarcadero\Studio\Projects\UConfiguracao.pas=C:\Users\Dias\Documents\Embarcadero\Studio\Projects\Unit1.pas</Transaction>
+    <Transaction>2026/03/20 10:32:40.947,=C:\Users\Dias\Documents\Embarcadero\Studio\Projects\Unit1.pas</Transaction>
+    <Transaction>2026/03/20 10:33:12.565,C:\Users\Dias\Documents\Embarcadero\Studio\Projects\UWebCliente.pas=C:\Users\Dias\Documents\Embarcadero\Studio\Projects\Unit1.pas</Transaction>
+    <Transaction>2026/03/20 10:41:27.894,=C:\Users\Dias\Documents\Embarcadero\Studio\Projects\Unit1.pas</Transaction>
+    <Transaction>2026/03/20 10:41:54.260,C:\Users\Dias\Documents\Embarcadero\Studio\Projects\UMonitorTunel.pas=C:\Users\Dias\Documents\Embarcadero\Studio\Projects\Unit1.pas</Transaction>
+    <Transaction>2026/03/20 10:57:06.366,C:\Users\Dias\Documents\Embarcadero\Studio\Projects\GerenciadorTunel.dproj=C:\Users\Dias\Documents\Embarcadero\Studio\Projects\Project1.dproj</Transaction>
+  </Transactions>
+</BorlandProject>

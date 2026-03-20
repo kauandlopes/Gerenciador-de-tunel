@@ -1,0 +1,84 @@
+program GerenciadorTunel;
+
+{$APPTYPE CONSOLE}
+
+uses
+  System.SysUtils,
+  System.Classes,
+  Winapi.Windows,
+  UConfiguracao in 'UConfiguracao.pas',
+  UWebCliente in 'UWebCliente.pas',
+  UMonitorTunel in 'UMonitorTunel.pas';
+
+var
+  Config: TConfiguracao;
+  WebCliente: TWebCliente;
+  Monitor: TMonitorTunel;
+  InputIP, InputPorta: string;
+  CaminhoLog: string;
+
+begin
+  // Inicialização de segurança para evitar o Warning W1036
+  WebCliente := nil;
+  Config := nil;
+
+  try
+    CaminhoLog := ExtractFilePath(ParamStr(0)) + 'monitoramento.txt';
+
+    if not FileExists(CaminhoLog) then
+    begin
+      Writeln('=== CONFIGURACAO INICIAL - TECH LEAD MODE ===');
+      Write('Digite a URL da sua API de destino: ');
+      Readln(InputIP);
+      Write('Digite a Porta local (Default 3000): ');
+      Readln(InputPorta);
+      if InputPorta = '' then InputPorta := '3000';
+
+      with TStringList.Create do
+      try
+        Add('[Config]');
+        Add('URL_API=' + InputIP);
+        Add('PORTA_SISTEMA=' + InputPorta);
+        SaveToFile(ExtractFilePath(ParamStr(0)) + 'config.ini');
+      finally
+        Free;
+      end;
+
+      with TStringList.Create do
+      try
+        Add(FormatDateTime('[dd/mm/yyyy hh:nn:ss] ', Now) + 'Instalacao concluida.');
+        SaveToFile(CaminhoLog);
+      finally
+        Free;
+      end;
+    end;
+
+    // Esconde a janela para rodar em background
+    ShowWindow(GetConsoleWindow, SW_HIDE);
+
+    Config := TConfiguracao.Create;
+    Config.Carregar;
+
+    WebCliente := TWebCliente.Create(Config);
+
+    WebCliente.RegistrarLog('>>> INICIANDO SERVICO CORE GERENCIADOR <<<');
+
+    // O Monitor inicia a Thread internamente
+    Monitor := TMonitorTunel.Create(Config, WebCliente);
+
+    // Loop de persistência do serviço
+    while True do
+      Sleep(60000);
+
+  except
+    on E: Exception do
+    begin
+      // Agora o compilador sabe que WebCliente está inicializado (mesmo que seja nil)
+      if Assigned(WebCliente) then
+        WebCliente.RegistrarLog('ERRO CRITICO NO KERNEL: ' + E.Message)
+      else
+        // Fallback caso o erro ocorra antes do WebCliente ser criado
+        Writeln('ERRO FATAL: ' + E.Message);
+    end;
+  end;
+end.

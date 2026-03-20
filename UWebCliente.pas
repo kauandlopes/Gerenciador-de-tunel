@@ -1,0 +1,84 @@
+unit UWebCliente;
+
+interface
+
+uses
+  System.SysUtils, System.Classes, System.JSON, UConfiguracao;
+
+type
+  TWebCliente = class
+  private
+    FConfig: TConfiguracao;
+    FUltimaSincronia: TDateTime;
+  public
+    constructor Create(AConfig: TConfiguracao);
+    procedure RegistrarLog(const Mensagem: string);
+    function Sincronizar(const ANovaUrl: string; Forcar: Boolean = False): Boolean;
+  end;
+
+implementation
+
+uses
+  System.Net.HttpClient, System.Net.HttpClientComponent, System.DateUtils;
+
+constructor TWebCliente.Create(AConfig: TConfiguracao);
+begin
+  inherited Create;
+  FConfig := AConfig;
+  FUltimaSincronia := 0;
+end;
+
+procedure TWebCliente.RegistrarLog(const Mensagem: string);
+var
+  ArquivoLog: TextFile;
+  Caminho: string;
+begin
+  Caminho := ExtractFilePath(ParamStr(0)) + 'monitoramento.txt';
+  AssignFile(ArquivoLog, Caminho);
+  try
+    if FileExists(Caminho) then Append(ArquivoLog) else Rewrite(ArquivoLog);
+    Writeln(ArquivoLog, FormatDateTime('[dd/mm/yyyy hh:nn:ss] ', Now) + Mensagem);
+  finally
+    CloseFile(ArquivoLog);
+  end;
+end;
+
+function TWebCliente.Sincronizar(const ANovaUrl: string; Forcar: Boolean = False): Boolean;
+var
+  HTTP: TNetHTTPClient;
+  Corpo: TStringStream;
+  Json: TJSONObject;
+begin
+  Result := False;
+
+  if (not Forcar) and (FUltimaSincronia > 0) and (SecondsBetween(Now, FUltimaSincronia) < 120) then
+    Exit;
+
+  HTTP := TNetHTTPClient.Create(nil);
+  Json := TJSONObject.Create;
+  try
+    Json.AddPair('id_ponto', FConfig.IdPonto);
+    Json.AddPair('url', ANovaUrl);
+    Json.AddPair('data_hora', DateTimeToStr(Now));
+
+    Corpo := TStringStream.Create(Json.ToString, TEncoding.UTF8);
+    try
+      try
+        HTTP.Post(FConfig.UrlDestino, Corpo);
+        FUltimaSincronia := Now;
+        RegistrarLog('SUCESSO: POST realizado -> ' + ANovaUrl);
+        Result := True;
+      except
+        on E: Exception do
+          RegistrarLog('ERRO DE POST: ' + E.Message);
+      end;
+    finally
+      Corpo.Free;
+    end;
+  finally
+    Json.Free;
+    HTTP.Free;
+  end;
+end;
+
+end.

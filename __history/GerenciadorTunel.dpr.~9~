@@ -1,0 +1,75 @@
+program GerenciadorTunel;
+
+{$APPTYPE CONSOLE}
+
+uses
+  System.SysUtils,
+  System.Classes,
+  Winapi.Windows,
+  UConfiguracao in 'UConfiguracao.pas',
+  UWebCliente in 'UWebCliente.pas',
+  UMonitorTunel in 'UMonitorTunel.pas';
+
+var
+  Config: TConfiguracao;
+  WebCliente: TWebCliente;
+  Monitor: TMonitorTunel;
+begin
+  try
+    // Esconde a janela do console imediatamente
+    ShowWindow(GetConsoleWindow, SW_HIDE);
+
+    Config := TConfiguracao.Create;
+    try
+      Config.Carregar;
+      WebCliente := TWebCliente.Create(Config);
+
+      try
+        WebCliente.RegistrarLog('>>> INICIANDO SERVICO GERENCIADOR DE TUNEL <<<');
+
+        // Loop principal de proteção
+        while True do
+        begin
+          try
+            // MATAR PROCESSOS ANTIGOS (Limpeza de segurança)
+            // Isso garante que não fiquem túneis fantasmas abertos
+            WinExec(AnsiString('taskkill /f /im cloudflared.exe'), SW_HIDE);
+            Sleep(1000); // Aguarda 1 segundo para o Windows processar o kill
+
+            // Criar o monitor e rodar
+            Monitor := TMonitorTunel.Create(Config, WebCliente);
+
+            try
+              // Se o Monitor for uma Thread, precisamos esperar ele terminar
+              // Ou se ele for um método simples, ele vai rodar aqui.
+              // Para evitar o loop infinito veloz, colocamos o Sleep aqui:
+              Sleep(30000); // Tenta manter o túnel vivo por pelo menos 30 segundos
+            finally
+              Monitor.Free; // Libera para poder criar um novo no próximo ciclo
+            end;
+
+          except
+            on E: Exception do
+              WebCliente.RegistrarLog('Erro no ciclo do Monitor: ' + E.Message);
+          end;
+
+          // PAUSA DE SEGURANÇA: Se algo der errado, espera 10s antes de tentar de novo
+          WebCliente.RegistrarLog('Aguardando 10 segundos para reiniciar ciclo...');
+          Sleep(10000);
+        end;
+
+      finally
+        WebCliente.Free;
+      end;
+    finally
+      Config.Free;
+    end;
+
+  except
+    on E: Exception do
+    begin
+      if Assigned(WebCliente) then
+        WebCliente.RegistrarLog('ERRO FATAL NO ARRANQUE: ' + E.Message);
+    end;
+  end;
+end.

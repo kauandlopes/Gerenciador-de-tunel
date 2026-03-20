@@ -1,0 +1,85 @@
+program GerenciadorTunel;
+
+{$APPTYPE CONSOLE}
+
+uses
+  System.SysUtils,
+  System.Classes,
+  Winapi.Windows,
+  UConfiguracao in 'UConfiguracao.pas',
+  UWebCliente in 'UWebCliente.pas',
+  UMonitorTunel in 'UMonitorTunel.pas';
+
+var
+  LConfig: TConfiguracao;
+  LWebCliente: TWebCliente;
+  InputIP, InputPorta: string;
+  CaminhoLog: string;
+
+begin
+  // Inicializamos com nil para evitar avisos de variável não inicializada
+  LWebCliente := nil;
+  LConfig := nil;
+
+  try
+    CaminhoLog := ExtractFilePath(ParamStr(0)) + 'monitoramento.txt';
+
+    // CONFIGURAÇÃO INICIAL (Primeira execução)
+    if not FileExists(CaminhoLog) then
+    begin
+      Writeln('=== CONFIGURACAO INICIAL - TECH LEAD MODE ===');
+      Write('Digite a URL da sua API de destino: ');
+      Readln(InputIP);
+      Write('Digite a Porta local (Default 3000): ');
+      Readln(InputPorta);
+      if InputPorta = '' then InputPorta := '3000';
+
+      with TStringList.Create do
+      try
+        Add('[Config]');
+        Add('URL_API=' + InputIP);
+        Add('PORTA_SISTEMA=' + InputPorta);
+        SaveToFile(ExtractFilePath(ParamStr(0)) + 'config.ini');
+      finally
+        Free;
+      end;
+
+      with TStringList.Create do
+      try
+        Add(FormatDateTime('[dd/mm/yyyy hh:nn:ss] ', Now) + 'Instalacao concluida.');
+        SaveToFile(CaminhoLog);
+      finally
+        Free;
+      end;
+    end;
+
+    // OCULTAR CONSOLE PARA RODAR EM BACKGROUND
+    ShowWindow(GetConsoleWindow, SW_HIDE);
+
+    // INICIALIZAÇÃO DOS COMPONENTES CORE
+    LConfig := TConfiguracao.Create;
+    LConfig.Carregar;
+
+    LWebCliente := TWebCliente.Create(LConfig);
+    LWebCliente.RegistrarLog('>>> SERVICO CORE INICIADO COM SUCESSO <<<');
+
+    // DISPARO DA THREAD DE MONITORAMENTO (AUTOGESTÃO)
+    TMonitorTunel.Create(LConfig, LWebCliente);
+
+    // LOOP DE PERSISTÊNCIA (MANTÉM O PROCESSO VIVO)
+    while True do
+      Sleep(60000);
+
+  except
+    on E: Exception do
+    begin
+      if Assigned(LWebCliente) then
+        LWebCliente.RegistrarLog('ERRO CRITICO NO KERNEL: ' + E.Message)
+      else if Assigned(LConfig) then
+        // Se o erro foi após criar o Config mas antes do WebCliente
+        Writeln('ERRO NA FASE DE SETUP: ' + E.Message)
+      else
+        Writeln('ERRO FATAL DE ALOCACAO: ' + E.Message);
+    end;
+  end;
+end.

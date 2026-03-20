@@ -1,0 +1,56 @@
+program GerenciadorTunel;
+
+{$APPTYPE CONSOLE}
+
+uses
+  System.SysUtils,
+  System.Classes,
+  Winapi.Windows,
+  UConfiguracao in 'UConfiguracao.pas',
+  UWebCliente in 'UWebCliente.pas',
+  UMonitorTunel in 'UMonitorTunel.pas';
+
+var
+  Config: TConfiguracao;
+  WebCliente: TWebCliente;
+  Monitor: TMonitorTunel;
+begin
+  try
+    // Esconde a janela do console imediatamente para rodar em background
+    ShowWindow(GetConsoleWindow, SW_HIDE);
+
+    Config := TConfiguracao.Create;
+    try
+      Config.Carregar;
+
+      WebCliente := TWebCliente.Create(Config);
+      try
+        // Registra o inicio no arquivo de texto
+        WebCliente.RegistrarLog('>>> INICIANDO SERVICO GERENCIADOR DE TUNEL <<<');
+
+        // Inicia o monitoramento (Thread)
+        Monitor := TMonitorTunel.Create(Config, WebCliente);
+
+        // Loop infinito para manter o serviço rodando
+        // Só fecha se for finalizado pelo Gerenciador de Tarefas
+        while True do
+        begin
+          Sleep(10000);
+        end;
+
+      finally
+        WebCliente.Free;
+      end;
+    finally
+      Config.Free;
+    end;
+
+  except
+    on E: Exception do
+    begin
+      // Agora funciona porque RegistrarLog é publico
+      if Assigned(WebCliente) then
+        WebCliente.RegistrarLog('ERRO FATAL NO ARRANQUE: ' + E.Message);
+    end;
+  end;
+end.

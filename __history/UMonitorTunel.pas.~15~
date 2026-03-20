@@ -1,0 +1,200 @@
+unit UMonitorTunel;
+
+interface
+
+uses
+  System.SysUtils, System.Classes, Winapi.Windows, Winapi.TlHelp32,
+  System.RegularExpressions, UWebCliente, UConfiguracao;
+
+type
+  TMonitorTunel = class(TThread)
+  private
+    FConfig: TConfiguracao;
+    FWebCliente: TWebCliente;
+    FUltimaUrl: string;
+    FDataUltimaTentativa: TDateTime;
+    procedure MatarCloudflaredAntigo;
+    procedure ExecutarProcessoOculto;
+    procedure LogInterno(const Msg: string);
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(AConfig: TConfiguracao; ACliente: TWebCliente);
+  end;
+
+implementation
+
+uses System.DateUtils;
+
+constructor TMonitorTunel.Create(AConfig: TConfiguracao; ACliente: TWebCliente);
+begin
+  // Thread inicia já rodando
+  inherited Create(False);
+  FreeOnTerminate := True;
+  FConfig := AConfig;
+  FWebCliente := ACliente;
+  FUltimaUrl := '';
+  FDataUltimaTentativa := 0;
+end;
+
+procedure TMonitorTunel.LogInterno(const Msg: string);
+begin
+  FWebCliente.RegistrarLog(Msg);
+end;
+
+procedure TMonitorTunel.MatarCloudflaredAntigo;
+var
+  Snap: THandle;
+  ProcEntry: TProcessEntry32;
+  HProc: THandle;
+begin
+  Snap := CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+  if Snap <> INVALID_HANDLE_VALUE then
+  try
+    ProcEntry.dwSize := SizeOf(ProcEntry);
+    if Process32First(Snap, ProcEntry) then
+    repeat
+      if SameText(string(ProcEntry.szExeFile), 'cloudflared.exe') then
+      begin
+        HProc := OpenProcess(PROCESS_TERMINATE, False, ProcEntry.th32ProcessID);
+        if HProc <> 0 then
+        begin
+          TerminateProcess(HProc, 0);
+          CloseHandle(HProc);
+        end;
+      end;
+    until not Process32Next(Snap, ProcEntry);
+  finally
+    CloseHandle(Snap);
+  end;
+end;
+
+procedure TMonitorTunel.ExecutarProcessoOculto;
+var
+  StartupInfo: TStartupInfo;
+  ProcessInfo: TProcessInformation;
+  SecurityAttr: TSecurityAttributes;
+  ReadPipe, WritePipe: THandle;
+  Buffer: array[0..4096] of AnsiChar;
+  BytesRead: Cardinal;
+  CaminhoExe, Comando, PastaApp: string;
+  AcumuladorString: string;
+  LinhaCompleta, UrlEncontrada: string;
+  Match: TMatch;
+begin
+  // Evita abrir túneis em loop infinito se houver erro (Rate Limit)
+  if (FDataUltimaTentativa > 0) and (SecondsBetween(Now, FDataUltimaTentativa) < 30) then
+  begin
+    LogInterno('Aguardando intervalo de segurança para nova tentativa...');
+    Exit;
+  end;
+
+  FDataUltimaTentativa := Now;
+  MatarCloudflaredAntigo;
+
+  PastaApp := ExtractFilePath(ParamStr(0));
+  CaminhoExe := PastaApp + 'cloudflared.exe';
+
+  if not FileExists(CaminhoExe) then
+  begin
+    LogInterno('ERRO CRÍTICO: cloudflared.exe não encontrado na pasta.');
+    Exit;
+  end;
+
+  {
+    COMANDO CORRIGIDO:
+    1. Forçamos o Host Header para localhost (Resolve o 502 no IIS/Delphi)
+    2. Garantimos aspas no caminho do executável
+  }
+  Comando := Format('"%s" tunnel --url http://localhost:%d --http-header "Host: localhost"',
+                    [CaminhoExe, FConfig.PortaLocal]);
+
+  SecurityAttr.nLength := SizeOf(TSecurityAttributes);
+  SecurityAttr.bInheritHandle := True;
+  SecurityAttr.lpSecurityDescriptor := nil;
+
+  if CreatePipe(ReadPipe, WritePipe, @SecurityAttr, 0) then
+  try
+    FillChar(StartupInfo, SizeOf(TStartupInfo), 0);
+    StartupInfo.cb := SizeOf(TStartupInfo);
+    StartupInfo.hStdOutput := WritePipe;
+    StartupInfo.hStdError := WritePipe;
+    StartupInfo.dwFlags := STARTF_USESHOWWINDOW or STARTF_USESTDHANDLES;
+    StartupInfo.wShowWindow := SW_HIDE;
+
+    // Criamos uma string única para o Windows poder manipular o buffer do comando
+    UniqueString(Comando);
+
+    if CreateProcess(nil, PChar(Comando), nil, nil, True, CREATE_NO_WINDOW, nil,
+                     PChar(PastaApp), StartupInfo, ProcessInfo) then
+    begin
+      LogInterno('Processo cloudflared iniciado. Lendo console...');
+
+      // FECHAR o WritePipe no processo PAI é crucial para o ReadFile não travar
+      CloseHandle(WritePipe);
+
+      AcumuladorString := '';
+
+      // Loop de leitura da saída do terminal do cloudflared
+      while ReadFile(ReadPipe, Buffer, SizeOf(Buffer) - 1, BytesRead, nil) do
+      begin
+        if BytesRead = 0 then break;
+
+        Buffer[BytesRead] := #0;
+        AcumuladorString := AcumuladorString + string(Buffer);
+
+        // Processa linha por linha para achar a URL
+        while Pos(#10, AcumuladorString) > 0 do
+        begin
+          LinhaCompleta := Copy(AcumuladorString, 1, Pos(#10, AcumuladorString) - 1);
+          Delete(AcumuladorString, 1, Pos(#10, AcumuladorString));
+
+          // Procura o padrão da URL trycloudflare
+          Match := TRegEx.Match(LinhaCompleta, 'https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com');
+          if Match.Success then
+          begin
+            UrlEncontrada := Match.Value;
+            if UrlEncontrada <> FUltimaUrl then
+            begin
+              LogInterno('URL CAPTURADA: ' + UrlEncontrada);
+              FWebCliente.Sincronizar(UrlEncontrada, True);
+              FUltimaUrl := UrlEncontrada;
+            end;
+          end;
+        end;
+
+        if Terminated then break;
+      end;
+
+      // Se o código chegou aqui, o processo do cloudflared encerrou
+      WaitForSingleObject(ProcessInfo.hProcess, 2000);
+      CloseHandle(ProcessInfo.hProcess);
+      CloseHandle(ProcessInfo.hThread);
+      LogInterno('Conexão encerrada pelo processo ou erro de rede.');
+    end
+    else
+      LogInterno('Falha ao executar cloudflared: ' + SysErrorMessage(GetLastError));
+
+  finally
+    // Garante que o pipe de leitura seja fechado
+    CloseHandle(ReadPipe);
+  end;
+end;
+
+procedure TMonitorTunel.Execute;
+begin
+  while not Terminated do
+  begin
+    try
+      ExecutarProcessoOculto;
+    except
+      on E: Exception do LogInterno('Erro na Thread: ' + E.Message);
+    end;
+
+    // Pequena pausa antes de tentar reabrir o túnel se ele cair
+    if not Terminated then
+      Sleep(5000);
+  end;
+end;
+
+end.

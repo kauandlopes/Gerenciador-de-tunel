@@ -1,0 +1,152 @@
+unit UMonitorTunel;
+
+interface
+
+uses
+  System.SysUtils, System.Classes, Winapi.Windows, Winapi.TlHelp32,
+  System.RegularExpressions, UWebCliente, UConfiguracao;
+
+type
+  TMonitorTunel = class(TThread)
+  private
+    FConfig: TConfiguracao;
+    FWebCliente: TWebCliente;
+    FUltimaUrl: string;
+    procedure MatarCloudflaredAntigo;
+    procedure ExecutarProcessoOculto;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(AConfig: TConfiguracao; ACliente: TWebCliente);
+  end;
+
+implementation
+
+constructor TMonitorTunel.Create(AConfig: TConfiguracao; ACliente: TWebCliente);
+begin
+  inherited Create(False);
+  FreeOnTerminate := True;
+  FConfig := AConfig;
+  FWebCliente := ACliente;
+end;
+
+procedure TMonitorTunel.MatarCloudflaredAntigo;
+var
+  Snap: THandle;
+  ProcEntry: TProcessEntry32;
+  HProc: THandle;
+begin
+  Snap := CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+  if Snap <> INVALID_HANDLE_VALUE then
+  try
+    ProcEntry.dwSize := SizeOf(ProcEntry);
+    if Process32First(Snap, ProcEntry) then
+    repeat
+      if SameText(string(ProcEntry.szExeFile), 'cloudflared.exe') then
+      begin
+        HProc := OpenProcess(PROCESS_TERMINATE, False, ProcEntry.th32ProcessID);
+        if HProc <> 0 then
+        begin
+          TerminateProcess(HProc, 0);
+          CloseHandle(HProc);
+        end;
+      end;
+    until not Process32Next(Snap, ProcEntry);
+  finally
+    CloseHandle(Snap);
+  end;
+end;
+
+procedure TMonitorTunel.ExecutarProcessoOculto;
+var
+  StartupInfo: TStartupInfo;
+  ProcessInfo: TProcessInformation;
+  SecurityAttr: TSecurityAttributes;
+  ReadPipe, WritePipe: THandle;
+  Buffer: array[0..4096] of AnsiChar;
+  BytesRead: Cardinal;
+  CaminhoPasta, CaminhoExe, Comando: string;
+  AcumuladorString: string;
+  LinhaCompleta, UrlEncontrada: string;
+  Match: TMatch;
+begin
+  MatarCloudflaredAntigo;
+  FUltimaUrl := '';
+
+  CaminhoPasta := ExtractFilePath(ParamStr(0));
+  CaminhoExe := CaminhoPasta + 'cloudflared.exe';
+
+  if not FileExists(CaminhoExe) then
+  begin
+    FWebCliente.RegistrarLog('ERRO: cloudflared.exe nao encontrado em ' + CaminhoExe);
+    Exit;
+  end;
+
+  Comando := '"' + CaminhoExe + '" tunnel --url http://localhost:' + IntToStr(FConfig.PortaLocal);
+  UniqueString(Comando);
+
+  SecurityAttr.nLength := SizeOf(TSecurityAttributes);
+  SecurityAttr.bInheritHandle := True;
+  SecurityAttr.lpSecurityDescriptor := nil;
+
+  if CreatePipe(ReadPipe, WritePipe, @SecurityAttr, 0) then
+  try
+    FillChar(StartupInfo, SizeOf(TStartupInfo), 0);
+    StartupInfo.cb := SizeOf(TStartupInfo);
+    StartupInfo.hStdOutput := WritePipe;
+    StartupInfo.hStdError := WritePipe;
+    StartupInfo.dwFlags := STARTF_USESHOWWINDOW or STARTF_USESTDHANDLES;
+    StartupInfo.wShowWindow := SW_HIDE;
+
+    // Inicia o processo definindo a pasta de trabalho correta
+    if CreateProcess(nil, PChar(Comando), nil, nil, True, CREATE_NO_WINDOW, nil,
+                     PChar(CaminhoPasta), StartupInfo, ProcessInfo) then
+    begin
+      CloseHandle(WritePipe);
+      AcumuladorString := '';
+
+      while ReadFile(ReadPipe, Buffer, SizeOf(Buffer) - 1, BytesRead, nil) do
+      begin
+        if BytesRead > 0 then
+        begin
+          Buffer[BytesRead] := #0;
+          AcumuladorString := AcumuladorString + string(Buffer);
+          while Pos(#10, AcumuladorString) > 0 do
+          begin
+            LinhaCompleta := Copy(AcumuladorString, 1, Pos(#10, AcumuladorString) - 1);
+            Delete(AcumuladorString, 1, Pos(#10, AcumuladorString));
+
+            Match := TRegEx.Match(LinhaCompleta, 'https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com');
+            if Match.Success then
+            begin
+              UrlEncontrada := Match.Value;
+              if UrlEncontrada <> FUltimaUrl then
+              begin
+                FWebCliente.Sincronizar(UrlEncontrada);
+                FUltimaUrl := UrlEncontrada;
+              end;
+            end;
+          end;
+        end;
+        if Terminated then break;
+        Sleep(10);
+      end;
+      WaitForSingleObject(ProcessInfo.hProcess, 2000);
+      CloseHandle(ProcessInfo.hProcess);
+      CloseHandle(ProcessInfo.hThread);
+    end;
+  finally
+    CloseHandle(ReadPipe);
+  end;
+end;
+
+procedure TMonitorTunel.Execute;
+begin
+  while not Terminated do
+  begin
+    ExecutarProcessoOculto;
+    if not Terminated then Sleep(5000);
+  end;
+end;
+
+end.

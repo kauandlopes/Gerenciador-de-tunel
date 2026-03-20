@@ -1,0 +1,82 @@
+program GerenciadorTunel;
+
+{$APPTYPE CONSOLE}
+
+uses
+  System.SysUtils,
+  System.Classes,
+  Winapi.Windows,
+  UConfiguracao in 'UConfiguracao.pas',
+  UWebCliente in 'UWebCliente.pas',
+  UMonitorTunel in 'UMonitorTunel.pas';
+
+var
+  Config: TConfiguracao;
+  WebCliente: TWebCliente;
+  // A variável Monitor foi removida daqui para matar o Hint H2077
+  InputIP, InputPorta: string;
+  CaminhoLog: string;
+
+begin
+  WebCliente := nil;
+  Config := nil;
+
+  try
+    CaminhoLog := ExtractFilePath(ParamStr(0)) + 'monitoramento.txt';
+
+    if not FileExists(CaminhoLog) then
+    begin
+      Writeln('=== CONFIGURACAO INICIAL - TECH LEAD MODE ===');
+      Write('Digite a URL da sua API de destino: ');
+      Readln(InputIP);
+      Write('Digite a Porta local (Default 3000): ');
+      Readln(InputPorta);
+      if InputPorta = '' then InputPorta := '3000';
+
+      with TStringList.Create do
+      try
+        Add('[Config]');
+        Add('URL_API=' + InputIP);
+        Add('PORTA_SISTEMA=' + InputPorta);
+        SaveToFile(ExtractFilePath(ParamStr(0)) + 'config.ini');
+      finally
+        Free;
+      end;
+
+      with TStringList.Create do
+      try
+        Add(FormatDateTime('[dd/mm/yyyy hh:nn:ss] ', Now) + 'Instalacao concluida.');
+        SaveToFile(CaminhoLog);
+      finally
+        Free;
+      end;
+    end;
+
+    ShowWindow(GetConsoleWindow, SW_HIDE);
+
+    Config := TConfiguracao.Create;
+    Config.Carregar;
+
+    WebCliente := TWebCliente.Create(Config);
+    WebCliente.RegistrarLog('>>> INICIANDO SERVICO CORE GERENCIADOR <<<');
+
+    {
+      Instanciamos a Thread diretamente.
+      Como UMonitorTunel tem FreeOnTerminate := True, ela vai rodar
+      e se destruir sozinha quando o programa fechar, sem precisar de variável.
+    }
+    TMonitorTunel.Create(Config, WebCliente);
+
+    while True do
+      Sleep(60000);
+
+  except
+    on E: Exception do
+    begin
+      if Assigned(WebCliente) then
+        WebCliente.RegistrarLog('ERRO CRITICO NO KERNEL: ' + E.Message)
+      else
+        Writeln('ERRO FATAL: ' + E.Message);
+    end;
+  end;
+end.

@@ -1,0 +1,94 @@
+unit UWebCliente;
+
+interface
+
+uses
+  System.SysUtils, System.Classes, System.JSON, UConfiguracao;
+
+type
+  TWebCliente = class
+  private
+    FConfig: TConfiguracao;
+    procedure RegistrarLog(const Mensagem: string); // Novo método privado
+  public
+    constructor Create(AConfig: TConfiguracao);
+    function Sincronizar(const ANovaUrl: string): Boolean;
+  end;
+
+implementation
+
+constructor TWebCliente.Create(AConfig: TConfiguracao);
+begin
+  inherited Create;
+  FConfig := AConfig;
+  RegistrarLog('>>> Sistema Iniciado e aguardando tunel...'); // Força a criação do TXT no minuto 0
+end;
+
+uses
+  System.Net.HttpClient, System.Net.HttpClientComponent;
+
+constructor TWebCliente.Create(AConfig: TConfiguracao);
+begin
+  inherited Create;
+  FConfig := AConfig;
+end;
+
+procedure TWebCliente.RegistrarLog(const Mensagem: string);
+var
+  ArquivoLog: TextFile;
+  Caminho: string;
+begin
+  Caminho := ExtractFilePath(ParamStr(0)) + 'monitoramento.txt';
+  AssignFile(ArquivoLog, Caminho);
+  try
+    { Se o arquivo já existir, abre para adicionar no fim. Se não, cria um novo }
+    if FileExists(Caminho) then
+      Append(ArquivoLog)
+    else
+      Rewrite(ArquivoLog);
+
+    Writeln(ArquivoLog, FormatDateTime('[dd/mm/yyyy hh:nn:ss] ', Now) + Mensagem);
+  finally
+    CloseFile(ArquivoLog); // Fecha o arquivo para liberar para outros processos
+  end;
+end;
+
+function TWebCliente.Sincronizar(const ANovaUrl: string): Boolean;
+var
+  HTTP: TNetHTTPClient;
+  Corpo: TStringStream;
+  Json: TJSONObject;
+begin
+  Result := False;
+  HTTP := TNetHTTPClient.Create(nil);
+  Json := TJSONObject.Create;
+  try
+    Json.AddPair('id_ponto', FConfig.IdPonto);
+    Json.AddPair('url', ANovaUrl);
+    Json.AddPair('data_hora', DateTimeToStr(Now));
+
+    Corpo := TStringStream.Create(Json.ToString, TEncoding.UTF8);
+    try
+      try
+        HTTP.Post(FConfig.UrlDestino, Corpo);
+        Result := True;
+        { Log de Sucesso }
+        RegistrarLog('SUCESSO: URL enviada para a API -> ' + ANovaUrl);
+      except
+        on E: Exception do
+        begin
+          { Log de Erro de Rede }
+          RegistrarLog('ERRO API: ' + E.Message + ' | URL capturada: ' + ANovaUrl);
+          Writeln('Erro API: ' + E.Message);
+        end;
+      end;
+    finally
+      Corpo.Free;
+    end;
+  finally
+    Json.Free;
+    HTTP.Free;
+  end;
+end;
+
+end.
